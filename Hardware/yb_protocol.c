@@ -1,0 +1,149 @@
+#include "yb_protocol.h"
+#include "usart_car.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+
+
+#define PTO_FUNC_ID        1
+
+
+uint8_t Rx2Buffer[PTO_BUF_LEN_MAX];
+/* 接收数据下标 */
+uint8_t Rx2Index = 0;
+/* 接收状态机 */
+uint8_t Rx2Flag = 0;
+/* 新命令接收标志 */
+uint8_t New_CMD_flag;
+/* 新命令数据长度 */
+uint8_t New_CMD_length;
+
+extern uint16_t k230_x, k230_y;
+extern uint16_t k230_w, k230_h;
+// 清除命令数据和相关标志
+void Pto_Clear_CMD_Flag(void)
+{
+	for (uint8_t i = 0; i < PTO_BUF_LEN_MAX; i++)
+	{
+		Rx2Buffer[i] = 0;
+	}
+	New_CMD_length = 0;
+	New_CMD_flag = 0;
+}
+
+// 接收数据进入协议缓存
+void Pto_Data_Receive(uint8_t Rx_Temp)
+{
+	switch (Rx2Flag)
+	{
+	case 0:
+		if (Rx_Temp == PTO_HEAD)
+		{
+			Rx2Buffer[0] = PTO_HEAD;
+			Rx2Flag = 1;
+            Rx2Index = 1;
+		}
+		break;
+
+	case 1:
+		Rx2Buffer[Rx2Index] = Rx_Temp;
+		Rx2Index++;
+		if (Rx_Temp == PTO_TAIL)
+		{
+			New_CMD_flag = 1;
+            New_CMD_length = Rx2Index;
+			Rx2Flag = 0;
+			Rx2Index = 0;
+		}
+        else if (Rx2Index >= PTO_BUF_LEN_MAX)//溢出缓存区
+        {
+            New_CMD_flag = 0;
+            New_CMD_length = 0;
+			Rx2Flag = 0;
+			Rx2Index = 0;
+            Pto_Clear_CMD_Flag();
+        }
+		break;
+
+	default:
+		break;
+	}
+}
+
+// 将字符串数字转成数字。示例："12"->12
+int Pto_Char_To_Int(char* data)
+{
+    return atoi(data);
+}
+
+/**
+ * @Brief: 数据分析
+ * @Note: 
+ * @Parm: 传入接受到的一个数据帧和长度
+ * @Retval: 
+ */
+void Pto_Data_Parse(uint8_t *data_buf, uint8_t num)
+{
+    char msg[50];
+    uint8_t pto_head = data_buf[0];
+	uint8_t pto_tail = data_buf[num-1];
+    if (!(pto_head == PTO_HEAD && pto_tail == PTO_TAIL))
+    {
+//        Serial2_SendString("head_tail error\n");
+        return;
+    }
+    Serial2_SendString("head_tail_ok\n");
+    uint8_t data_index = 1;
+    uint8_t field_index[PTO_BUF_LEN_MAX] = {0};
+    int i = 0;
+    int values[PTO_BUF_LEN_MAX] = {0};
+    for (i = 1; i < num-1; i++)
+    {
+        if (data_buf[i] == ',')
+        {
+            data_buf[i] = 0;
+            field_index[data_index] = i;
+            data_index++;
+        }
+    }
+    for (i = 0; i < data_index; i++)
+    {
+        values[i] = Pto_Char_To_Int((char*)data_buf+field_index[i]+1);
+    }
+    
+    uint8_t pto_len = values[0];
+    
+    if (pto_len != num)
+    {
+//        sprintf(msg, "pto_len error:%d , data_len:%d\n", pto_len, num);
+//        Serial2_SendString(msg);
+        return;
+    }
+//    Serial2_SendString("pto_len_ok\n");
+    uint8_t pto_id = values[1];
+    if (pto_id != PTO_FUNC_ID)
+    {
+//        Serial2_SendString("pto_id error\n");
+        return;
+    }
+    k230_x = values[2];
+    k230_y = values[3];
+    k230_w = values[4];
+    k230_h = values[5];
+    return;
+}
+
+// 循环处理协议内容
+void Pto_Loop(void)
+{
+    while (1)
+    {
+
+        if (New_CMD_flag)
+		{
+			Pto_Data_Parse((uint8_t*)Rx2Buffer, New_CMD_length);
+			Pto_Clear_CMD_Flag();
+		}
+    }
+}
+
